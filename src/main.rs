@@ -8,19 +8,21 @@ use std::thread;
 use std::time::Duration;
 
 use iced::{Align, button, Button, Column, Container, Element, Image, Length, Sandbox, Settings, Text};
+use iced::image::Handle;
 use scrap::{Capturer, Display};
 
 #[derive(Default)]
 struct Counter {
     value: i32,
-    increment_button: button::State,
-    decrement_button: button::State,
+    capture_button: button::State,
+    image_width: u32,
+    image_height: u32,
+    image_data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Message {
-    IncrementPressed,
-    DecrementPressed,
+    CaptureImagePressed
 }
 
 impl Sandbox for Counter {
@@ -36,33 +38,57 @@ impl Sandbox for Counter {
 
     fn update(&mut self, message: Message) {
         match message {
-            Message::IncrementPressed => {
-                self.value += 1;
-            }
-            Message::DecrementPressed => {
-                self.value -= 1;
+            Message::CaptureImagePressed => {
+                let one_second = Duration::new(1, 0);
+                let one_frame = one_second / 60;
+
+                let display = Display::primary().expect("Couldn't find primary display.");
+                let mut capturer = Capturer::new(display).expect("Couldn't begin capture.");
+                let (w, h) = (capturer.width(), capturer.height());
+                self.image_width = w as u32;
+                self.image_height = h as u32;
+
+                loop {
+                    // Wait until there's a frame.
+
+                    let buffer = match capturer.frame() {
+                        Ok(buffer) => buffer,
+                        Err(error) => {
+                            if error.kind() == WouldBlock {
+                                // Keep spinning.
+                                thread::sleep(one_frame);
+                                continue;
+                            } else {
+                                panic!("Error: {}", error);
+                            }
+                        }
+                    };
+
+                    println!("Captured! Saving...");
+
+
+                    self.image_data.clear();
+                    self.image_data = buffer.to_vec();
+
+
+                    break;
+                }
             }
         }
     }
 
     fn view(&mut self) -> Element<Message> {
         let img =
-            Image::new("screenshot.png")
+            Image::new(Handle::from_pixels(self.image_width, self.image_height, (*self.image_data).to_vec()))
                 .width(Length::Fill)
                 .height(Length::Fill);
 
-
         Column::new()
             .padding(20)
-            .align_items(Align::Center)
+            .align_items(Align::Start)
             .push(
-                Button::new(&mut self.increment_button, Text::new("Increment"))
-                    .on_press(Message::IncrementPressed),
-            )
-            .push(Text::new(self.value.to_string()).size(50))
-            .push(
-                Button::new(&mut self.decrement_button, Text::new("Decrement"))
-                    .on_press(Message::DecrementPressed),
+                Button::new(&mut self.capture_button, Text::new("capture"))
+                    .on_press(Message::CaptureImagePressed)
             )
             .push(img)
             .into()
@@ -70,60 +96,5 @@ impl Sandbox for Counter {
 }
 
 fn main() {
-    let one_second = Duration::new(1, 0);
-    let one_frame = one_second / 60;
-
-    let display = Display::primary().expect("Couldn't find primary display.");
-    let mut capturer = Capturer::new(display).expect("Couldn't begin capture.");
-    let (w, h) = (capturer.width(), capturer.height());
-
-    let mut bitflipped = Vec::with_capacity(w * h * 4);
-    loop {
-        // Wait until there's a frame.
-
-        let buffer = match capturer.frame() {
-            Ok(buffer) => buffer,
-            Err(error) => {
-                if error.kind() == WouldBlock {
-                    // Keep spinning.
-                    thread::sleep(one_frame);
-                    continue;
-                } else {
-                    panic!("Error: {}", error);
-                }
-            }
-        };
-
-        println!("Captured! Saving...");
-
-        // Flip the ARGB image into a BGRA image.
-
-        let stride = buffer.len() / h;
-
-        for y in 0..h {
-            for x in 0..w {
-                let i = stride * y + 4 * x;
-                bitflipped.extend_from_slice(&[
-                    buffer[i + 2],
-                    buffer[i + 1],
-                    buffer[i],
-                    255,
-                ]);
-            }
-        }
-
-
-        repng::encode(
-            File::create("screenshot.png").unwrap(),
-            w as u32,
-            h as u32,
-            &bitflipped,
-        ).unwrap();
-
-        println!("Image saved to `screenshot.png`.");
-        break;
-    }
-
-
     Counter::run(Settings::default());
 }
